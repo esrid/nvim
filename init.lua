@@ -17,6 +17,7 @@ opt.ignorecase = true
 opt.smartcase = true
 opt.signcolumn = "yes"
 opt.termguicolors = true
+opt.swapfile = false
 opt.updatetime = 250
 opt.splitbelow = true
 opt.splitright = true
@@ -46,17 +47,101 @@ vim.pack.add({
 
 -- ---------------------------------------------------------------- lsp
 --
--- pyright  : npm i -g pyright
--- gopls    : go install golang.org/x/tools/gopls@latest
--- tsc      : npm i -g typescript   (TypeScript 7+, compilateur Go, mode --lsp natif —
---            c'est ce que "tsgo" est devenu ; nvim-lspconfig déprécie tsgo au profit de tsc)
+-- brew install pyright gopls typescript
+--   pyright -> pyright-langserver --stdio
+--   gopls   -> gopls
+--   tsc     -> tsc --lsp --stdio  (TypeScript 7+, compilateur Go, mode --lsp natif —
+--              c'est ce que "tsgo" est devenu ; nvim-lspconfig déprécie tsgo au profit de tsc)
 
-vim.lsp.enable({ "pyright", "gopls", "tsc" })
+--   sqls    -> sqls  (go install github.com/sqls-server/sqls@latest ;
+--              ne demarre qu'avec un config.yml a la racine du projet decrivant
+--              la connexion DB — sans ca, seul le formatage pg_format s'applique)
+
+vim.lsp.enable({ "pyright", "gopls", "tsc", "sqls" })
 
 vim.diagnostic.config({
-  virtual_text = true,
   severity_sort = true,
+  signs = {
+    text = {
+      [vim.diagnostic.severity.ERROR] = "●",
+      [vim.diagnostic.severity.WARN] = "●",
+      [vim.diagnostic.severity.INFO] = "●",
+      [vim.diagnostic.severity.HINT] = "●",
+    },
+  },
+  underline = true,
+  virtual_text = false,
+  virtual_lines = false,
+  float = {
+    border = "rounded",
+    max_width = 80,
+    source = "if_many",
+    header = "",
+    title = { { " Diagnostics ", "FloatTitle" } },
+    title_pos = "left",
+  },
 })
+
+-- Affiche automatiquement les diagnostics de la ligne courante dans une
+-- fenetre flottante. Elle ne prend jamais le focus et disparait des que le
+-- curseur quitte la ligne, afin de rester lisible sans interrompre l'edition.
+local diagnostic_float_win
+
+local function close_diagnostic_float()
+  if diagnostic_float_win and vim.api.nvim_win_is_valid(diagnostic_float_win) then
+    vim.api.nvim_win_close(diagnostic_float_win, true)
+  end
+  diagnostic_float_win = nil
+end
+
+local function show_diagnostic_float()
+  close_diagnostic_float()
+
+  -- Ne pas recouvrir la completion ni ouvrir un float depuis un autre float.
+  if vim.fn.pumvisible() == 1 or vim.api.nvim_win_get_config(0).relative ~= "" then
+    return
+  end
+
+  local line = vim.api.nvim_win_get_cursor(0)[1] - 1
+  if vim.tbl_isempty(vim.diagnostic.get(0, { lnum = line })) then
+    return
+  end
+
+  local _, winid = vim.diagnostic.open_float({
+    scope = "line",
+    focus = false,
+    focusable = false,
+    close_events = { "BufLeave", "CursorMoved", "InsertEnter", "FocusLost" },
+  })
+  diagnostic_float_win = winid
+end
+
+local diagnostic_float_group = vim.api.nvim_create_augroup("diagnostic_float", { clear = true })
+vim.api.nvim_create_autocmd({ "BufEnter", "CursorHold", "CursorMoved", "DiagnosticChanged", "InsertLeave" }, {
+  group = diagnostic_float_group,
+  callback = function()
+    vim.schedule(show_diagnostic_float)
+  end,
+})
+
+-- Copie directement dans le presse-papiers systeme les diagnostics de la ligne.
+local function copy_diagnostic()
+  local line = vim.api.nvim_win_get_cursor(0)[1] - 1
+  local diagnostics = vim.diagnostic.get(0, { lnum = line })
+  if vim.tbl_isempty(diagnostics) then
+    vim.notify("Aucun diagnostic sur cette ligne", vim.log.levels.INFO)
+    return
+  end
+
+  table.sort(diagnostics, function(a, b)
+    return a.severity < b.severity
+  end)
+  local messages = vim.tbl_map(function(diagnostic)
+    return diagnostic.message
+  end, diagnostics)
+  vim.fn.setreg("+", table.concat(messages, "\n"))
+  vim.notify(#messages == 1 and "Diagnostic copie" or (#messages .. " diagnostics copies"))
+end
 
 vim.api.nvim_create_autocmd("LspAttach", {
   callback = function(args)
@@ -64,7 +149,7 @@ vim.api.nvim_create_autocmd("LspAttach", {
     local client = vim.lsp.get_client_by_id(args.data.client_id)
 
     -- autotrigger = false : le menu ne s'ouvre jamais tout seul (pas sur le
-    -- point apres `fmt.`), uniquement sur <C-Space>. Voir le mapping plus bas.
+    -- point apres `fmt.`), uniquement sur <C-l>. Voir le mapping plus bas.
     if client and client:supports_method("textDocument/completion") then
       vim.lsp.completion.enable(true, client.id, bufnr, { autotrigger = false })
     end
@@ -77,6 +162,7 @@ vim.api.nvim_create_autocmd("LspAttach", {
     map("n", "gr", vim.lsp.buf.references)
     map("n", "gi", vim.lsp.buf.implementation)
     map("n", "K", vim.lsp.buf.hover)
+    map("n", "gh", copy_diagnostic)
     map("n", "<leader>rn", vim.lsp.buf.rename)
     map({ "n", "v" }, "<leader>ca", vim.lsp.buf.code_action)
     map("n", "<leader>d", vim.diagnostic.open_float)
@@ -96,9 +182,7 @@ vim.keymap.set("n", "<leader>fs", fzf.lsp_document_symbols, { desc = "Symboles" 
 
 -- ---------------------------------------------------------------- format
 --
--- ruff (python)     : npm indépendant, installe via `pip install ruff` ou pacman
--- goimports (go)     : go install golang.org/x/tools/cmd/goimports@latest
--- prettier (ts/js)   : npm i -g prettier
+-- brew install ruff goimports prettier pgformatter
 
 require("conform").setup({
   formatters_by_ft = {
@@ -109,6 +193,7 @@ require("conform").setup({
     javascript = { "prettier" },
     javascriptreact = { "prettier" },
     json = { "prettier" },
+    sql = { "pg_format" },
   },
   format_on_save = { timeout_ms = 1000, lsp_format = "fallback" },
 })
@@ -188,9 +273,9 @@ end, { desc = "Completion precedente / desindenter" })
 
 -- ---------------------------------------------------------------- completion
 --
--- <C-Space> ouvre le menu LSP a la demande. <C-x><C-o> (omnifunc) marche aussi,
+-- <C-l> ouvre le menu LSP a la demande. <C-x><C-o> (omnifunc) marche aussi,
 -- nativement. Dans le menu : <Tab>/<S-Tab> naviguent, <C-y> valide, <C-e> ferme.
 
-vim.keymap.set("i", "<C-Space>", function()
+vim.keymap.set("i", "<C-l>", function()
   vim.lsp.completion.get()
 end, { desc = "Completion LSP" })
