@@ -43,7 +43,11 @@ vim.pack.add({
   { src = "https://github.com/nvim-tree/nvim-web-devicons" },
   { src = "https://github.com/stevearc/conform.nvim" },
   { src = "https://github.com/windwp/nvim-autopairs" },
+  { src = "https://github.com/catppuccin/nvim", name = "catppuccin" },
 })
+
+-- Meme theme que wezterm (~/.wezterm.lua).
+vim.cmd.colorscheme("catppuccin-macchiato")
 
 -- ---------------------------------------------------------------- lsp
 --
@@ -53,11 +57,17 @@ vim.pack.add({
 --   tsc     -> tsc --lsp --stdio  (TypeScript 7+, compilateur Go, mode --lsp natif —
 --              c'est ce que "tsgo" est devenu ; nvim-lspconfig déprécie tsgo au profit de tsc)
 
+--   templ   -> templ lsp  (deja installe via go install github.com/a-h/templ/cmd/templ@latest ;
+--              nvim 0.12 detecte *.templ nativement, rien a ajouter cote filetype)
+--   tailwindcss -> tailwindcss-language-server  (npm i -g @tailwindcss/language-server ;
+--              nvim-lspconfig couvre deja le ft templ et mappe templ -> html.
+--              Ne demarre QUE si la racine a un package.json avec la dep tailwindcss,
+--              un tailwind.config.* ou un .git — sinon silence total, c'est normal)
 --   sqls    -> sqls  (go install github.com/sqls-server/sqls@latest ;
 --              ne demarre qu'avec un config.yml a la racine du projet decrivant
 --              la connexion DB — sans ca, seul le formatage pg_format s'applique)
 
-vim.lsp.enable({ "pyright", "gopls", "tsc", "sqls" })
+vim.lsp.enable({ "pyright", "gopls", "templ", "tailwindcss", "tsc", "sqls" })
 
 vim.diagnostic.config({
   severity_sort = true,
@@ -174,8 +184,8 @@ vim.api.nvim_create_autocmd("LspAttach", {
 -- ---------------------------------------------------------------- fzf-lua
 
 local fzf = require("fzf-lua")
-vim.keymap.set("n", "<leader>ff", fzf.files, { desc = "Fichiers" })
-vim.keymap.set("n", "<leader>fg", fzf.live_grep, { desc = "Grep" })
+vim.keymap.set("n", "<leader><Space>", fzf.files, { desc = "Fichiers" })
+vim.keymap.set("n", "<leader>/", fzf.live_grep, { desc = "Grep" })
 vim.keymap.set("n", "<leader>fb", fzf.buffers, { desc = "Buffers" })
 vim.keymap.set("n", "<leader>fd", fzf.diagnostics_document, { desc = "Diagnostics" })
 vim.keymap.set("n", "<leader>fs", fzf.lsp_document_symbols, { desc = "Symboles" })
@@ -188,6 +198,7 @@ require("conform").setup({
   formatters_by_ft = {
     python = { "ruff_format" },
     go = { "goimports" },
+    templ = { "templ" },  -- templ fmt -stdin-filepath
     typescript = { "prettier" },
     typescriptreact = { "prettier" },
     javascript = { "prettier" },
@@ -222,6 +233,9 @@ require("nvim-tree").setup({
   on_attach = nvim_tree_on_attach,
   actions = {
     open_file = { quit_on_open = true },
+  },
+  filters = {
+    custom = { ".*_templ\\.go$" },
   },
 })
 vim.keymap.set("n", "<leader>e", "<cmd>NvimTreeToggle<CR>", { desc = "File tree" })
